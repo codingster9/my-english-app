@@ -1,0 +1,124 @@
+// Advanced English Learning Platform Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Daily words - core feature
+model DailyWord {
+  id          String   @id @default(cuid())
+  date        DateTime @unique
+  word1       String
+  meaning1    String
+  example1    String?
+  word2       String
+  meaning2    String
+  example2    String?
+  difficulty  String   @default("medium") // easy, medium, hard
+  category    String?  // grammar, vocabulary, idioms, etc.
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Blog posts for detailed learning
+model Blog {
+  id          String   @id @default(cuid())
+  title       String
+  slug        String   @unique
+  content     String
+  excerpt     String?
+  coverImage  String?
+  category    String   // grammar, vocabulary, tips, culture, etc.
+  tags        String   @default("[]") // JSON string of tags array
+  published   Boolean  @default(false)
+  featured    Boolean  @default(false)
+  readTime    Int?     // minutes
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Events for time-sensitive learning
+model Event {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  startDate   DateTime
+  endDate     DateTime?
+  type        String   // webinar, workshop, challenge, competition
+  isOnline    Boolean  @default(true)
+  maxParticipants Int?
+  tags        String   @default("[]") // JSON string of tags array
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Flashcards for spaced repetition
+model Flashcard {
+  id          String   @id @default(cuid())
+  front       String   // question/word
+  back        String   // answer/meaning
+  category    String?
+  difficulty  String   @default("medium")
+  imageUrl    String?
+  audioUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Spaced repetition fields
+  lastReviewed DateTime?
+  nextReview  DateTime?
+  interval    Int      @default(1) // days
+  repetitions Int      @default(0)
+  easeFactor  Float    @default(2.5)
+}
+
+// Quiz questions
+model Quiz {
+  id          String   @id @default(cuid())
+  question    String
+  type        String   // multiple_choice, true_false, fill_blank, matching
+  options     String   @default("[]") // JSON string of options array
+  correctAnswer String
+  explanation String?
+  difficulty  String   @default("medium")
+  category    String?
+  points      Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// User progress tracking
+model UserProgress {
+  id          String   @id @default(cuid())
+  userId      String   @unique // simple user ID (could be localStorage ID)
+  streak      Int      @default(0)
+  totalWords  Int      @default(0)
+  totalBlogsRead Int   @default(0)
+  totalQuizzesTaken Int @default(0)
+  totalQuizzesCorrect Int @default(0)
+  lastActive  DateTime @default(now())
+  level       String   @default("beginner")
+  points      Int      @default(0)
+  
+  // Settings
+  dailyGoal   Int      @default(2) // words per day
+  notificationsEnabled Boolean @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// User activity log
+model Activity {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   // word_learned, blog_read, quiz_taken, flashcard_reviewed
+  content     String   // JSON object with activity details
+  points      Int      @default(0)
+  createdAt   DateTime @default(now())
+}
