@@ -9,10 +9,12 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Edit, Trash2, Save, X } from 'lucide-react';
+import { Plus, Edit, Trash2, Save, X, Loader2 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
+// --- Interfaces ---
 interface DailyWord {
-  id: string;
+  id?: string;
   date: string;
   word1: string;
   meaning1: string;
@@ -25,7 +27,7 @@ interface DailyWord {
 }
 
 interface Blog {
-  id: string;
+  id?: string;
   title: string;
   slug: string;
   content: string;
@@ -39,17 +41,15 @@ interface Blog {
 }
 
 interface Flashcard {
-  id: string;
+  id?: string;
   front: string;
   back: string;
   category?: string;
   difficulty: string;
-  imageUrl?: string;
-  audioUrl?: string;
 }
 
 interface Quiz {
-  id: string;
+  id?: string;
   question: string;
   type: string;
   options: string[];
@@ -61,7 +61,7 @@ interface Quiz {
 }
 
 interface Event {
-  id: string;
+  id?: string;
   title: string;
   description: string;
   startDate: string;
@@ -73,138 +73,144 @@ interface Event {
 }
 
 export default function AdminPanel() {
+  const { toast } = useToast();
+  
+  // Data States
   const [dailyWords, setDailyWords] = useState<DailyWord[]>([]);
   const [blogs, setBlogs] = useState<Blog[]>([]);
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  
+  // UI States
   const [editingItem, setEditingItem] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchData();
+    if (typeof window !== 'undefined') {
+      fetchData();
+    }
   }, []);
 
   const fetchData = async () => {
-    try {
-      setLoading(true);
-      
-      const [wordsRes, blogsRes, cardsRes, quizzesRes, eventsRes] = await Promise.all([
-        fetch('/api/daily-words?limit=50'),
-        fetch('/api/blogs?limit=50'),
-        fetch('/api/flashcards?limit=50'),
-        fetch('/api/quizzes?limit=50'),
-        fetch('/api/events?limit=50')
-      ]);
+    setLoading(true);
+    
+    // Helper to safely fetch data
+    const fetchResource = async (path: string, setter: Function) => {
+      try {
+        const origin = window.location.origin;
+        const url = new URL(path, origin).toString();
+        
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          setter(data);
+        }
+      } catch (err) {
+        console.warn(`Error loading ${path}:`, err);
+      }
+    };
 
-      if (wordsRes.ok) setDailyWords(await wordsRes.json());
-      if (blogsRes.ok) setBlogs(await blogsRes.json());
-      if (cardsRes.ok) setFlashcards(await cardsRes.json());
-      if (quizzesRes.ok) setQuizzes(await quizzesRes.json());
-      if (eventsRes.ok) setEvents(await eventsRes.json());
+    try {
+      await Promise.all([
+        fetchResource('/api/daily-words?limit=50', setDailyWords),
+        fetchResource('/api/blogs?limit=50', setBlogs),
+        fetchResource('/api/flashcards?limit=50', setFlashcards),
+        fetchResource('/api/quizzes?limit=50', setQuizzes),
+        fetchResource('/api/events?limit=50', setEvents)
+      ]);
     } catch (error) {
-      console.error('Error fetching admin data:', error);
+      console.error('Critical error in fetchData:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const saveDailyWord = async (word: Partial<DailyWord>) => {
+  // --- UNIVERSAL SAVE HANDLER ---
+  // This detects if we are Editing (PUT) or Creating (POST)
+  const handleSave = async (path: string, data: any, typeName: string) => {
     try {
-      const response = await fetch('/api/daily-words', {
-        method: 'POST',
+      setSaving(true);
+      
+      // LOGIC: If it has an ID, it's an edit. If not, it's new.
+      const isEditing = !!data.id; 
+      const method = isEditing ? 'PUT' : 'POST';
+      
+      const origin = window.location.origin;
+      const url = new URL(path, origin).toString();
+
+      const response = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(word)
+        body: JSON.stringify(data)
       });
-      if (response.ok) {
-        setEditingItem(null);
-        fetchData();
+
+      if (!response.ok) {
+        throw new Error('Failed to save');
       }
-    } catch (error) {
-      console.error('Error saving daily word:', error);
+
+      // Success Popup
+      toast({
+        title: "Success!",
+        description: `${typeName} has been ${isEditing ? 'updated' : 'created'}.`,
+        className: "bg-green-500 text-white", // Force green style
+      });
+
+      setEditingItem(null);
+      fetchData(); // Refresh list immediately
+    } catch (error: any) {
+      console.error(error);
+      toast({
+        title: "Error",
+        description: "Failed to save. check permissions.",
+        variant: "destructive"
+      });
+    } finally {
+      setSaving(false);
     }
   };
 
-  const saveBlog = async (blog: Partial<Blog>) => {
+  const handleDelete = async (path: string, id: string) => {
+    if(!confirm("Delete this item?")) return;
+    
     try {
-      const response = await fetch('/api/blogs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(blog)
-      });
-      if (response.ok) {
-        setEditingItem(null);
-        fetchData();
-      }
-    } catch (error) {
-      console.error('Error saving blog:', error);
-    }
-  };
+        const origin = window.location.origin;
+        const url = new URL(`${path}?id=${id}`, origin).toString();
 
-  const saveFlashcard = async (card: Partial<Flashcard>) => {
-    try {
-      const response = await fetch('/api/flashcards', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(card)
-      });
-      if (response.ok) {
-        setEditingItem(null);
+        const response = await fetch(url, { method: 'DELETE' });
+        if(!response.ok) throw new Error("Failed");
+        
+        toast({ title: "Deleted", description: "Item removed." });
         fetchData();
-      }
     } catch (error) {
-      console.error('Error saving flashcard:', error);
+        toast({ title: "Error", description: "Could not delete.", variant: "destructive" });
     }
-  };
-
-  const saveQuiz = async (quiz: Partial<Quiz>) => {
-    try {
-      const response = await fetch('/api/quizzes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(quiz)
-      });
-      if (response.ok) {
-        setEditingItem(null);
-        fetchData();
-      }
-    } catch (error) {
-      console.error('Error saving quiz:', error);
-    }
-  };
-
-  const saveEvent = async (event: Partial<Event>) => {
-    try {
-      const response = await fetch('/api/events', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(event)
-      });
-      if (response.ok) {
-        setEditingItem(null);
-        fetchData();
-      }
-    } catch (error) {
-      console.error('Error saving event:', error);
-    }
-  };
+  }
 
   if (loading) {
-    return <div className="flex items-center justify-center min-h-screen">
-      <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
-    </div>;
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      </div>
+    );
   }
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-7xl mx-auto">
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Admin Panel</h1>
-          <p className="text-gray-600">Manage your English learning platform content</p>
+        <header className="mb-8 flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+            <p className="text-gray-600">Manage content</p>
+          </div>
+          <Button variant="outline" onClick={() => window.location.href = '/'}>
+            Go to Site
+          </Button>
         </header>
 
         <Tabs defaultValue="daily-words" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-5 mb-8">
             <TabsTrigger value="daily-words">Daily Words</TabsTrigger>
             <TabsTrigger value="blogs">Blogs</TabsTrigger>
             <TabsTrigger value="flashcards">Flashcards</TabsTrigger>
@@ -212,140 +218,75 @@ export default function AdminPanel() {
             <TabsTrigger value="events">Events</TabsTrigger>
           </TabsList>
 
-          {/* Daily Words Management */}
+          {/* --- DAILY WORDS --- */}
           <TabsContent value="daily-words">
             <div className="space-y-6">
               <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Add New Daily Words</CardTitle>
-                    <Button onClick={() => setEditingItem({ type: 'daily-word' })}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Words
-                    </Button>
-                  </div>
-                </CardHeader>
-              </Card>
-
-              {editingItem?.type === 'daily-word' && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Edit Daily Words</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="date">Date</Label>
-                        <Input
-                          id="date"
-                          type="date"
-                          value={editingItem.date || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, date: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="difficulty">Difficulty</Label>
-                        <Select value={editingItem.difficulty || 'medium'} onValueChange={(value) => setEditingItem({ ...editingItem, difficulty: value })}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="easy">Easy</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="hard">Hard</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="word1">Word 1</Label>
-                        <Input
-                          id="word1"
-                          value={editingItem.word1 || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, word1: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="word2">Word 2</Label>
-                        <Input
-                          id="word2"
-                          value={editingItem.word2 || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, word2: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="meaning1">Meaning 1</Label>
-                        <Input
-                          id="meaning1"
-                          value={editingItem.meaning1 || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, meaning1: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="meaning2">Meaning 2</Label>
-                        <Input
-                          id="meaning2"
-                          value={editingItem.meaning2 || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, meaning2: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="example1">Example 1</Label>
-                        <Textarea
-                          id="example1"
-                          value={editingItem.example1 || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, example1: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="example2">Example 2</Label>
-                        <Textarea
-                          id="example2"
-                          value={editingItem.example2 || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, example2: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="flex gap-2">
-                      <Button onClick={() => saveDailyWord(editingItem)}>
-                        <Save className="h-4 w-4 mr-2" />
-                        Save
-                      </Button>
-                      <Button variant="outline" onClick={() => setEditingItem(null)}>
-                        <X className="h-4 w-4 mr-2" />
-                        Cancel
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Existing Daily Words</CardTitle>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle>Daily Words</CardTitle>
+                  <Button onClick={() => setEditingItem({ type: 'daily-word', difficulty: 'medium' })}>
+                    <Plus className="h-4 w-4 mr-2" /> Add New
+                  </Button>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    {dailyWords.map((word) => (
-                      <div key={word.id} className="flex items-center justify-between p-4 border rounded-lg">
+                  {/* Editor */}
+                  {editingItem?.type === 'daily-word' && (
+                    <div className="bg-white p-6 border rounded-lg shadow-sm mb-6 space-y-4">
+                      <h3 className="font-bold">{editingItem.id ? 'Edit' : 'New'} Word Pair</h3>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Date</Label>
+                          <Input type="date" value={editingItem.date ? new Date(editingItem.date).toISOString().split('T')[0] : ''} onChange={(e) => setEditingItem({...editingItem, date: new Date(e.target.value).toISOString()})} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Difficulty</Label>
+                          <Select value={editingItem.difficulty} onValueChange={(v) => setEditingItem({...editingItem, difficulty: v})}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="easy">Easy</SelectItem>
+                              <SelectItem value="medium">Medium</SelectItem>
+                              <SelectItem value="hard">Hard</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div className="space-y-2 p-3 bg-blue-50 rounded">
+                            <Label>Word 1</Label>
+                            <Input placeholder="Word" value={editingItem.word1 || ''} onChange={(e) => setEditingItem({...editingItem, word1: e.target.value})} />
+                            <Input placeholder="Meaning" value={editingItem.meaning1 || ''} onChange={(e) => setEditingItem({...editingItem, meaning1: e.target.value})} />
+                            <Textarea placeholder="Example" value={editingItem.example1 || ''} onChange={(e) => setEditingItem({...editingItem, example1: e.target.value})} />
+                        </div>
+                        <div className="space-y-2 p-3 bg-purple-50 rounded">
+                            <Label>Word 2</Label>
+                            <Input placeholder="Word" value={editingItem.word2 || ''} onChange={(e) => setEditingItem({...editingItem, word2: e.target.value})} />
+                            <Input placeholder="Meaning" value={editingItem.meaning2 || ''} onChange={(e) => setEditingItem({...editingItem, meaning2: e.target.value})} />
+                            <Textarea placeholder="Example" value={editingItem.example2 || ''} onChange={(e) => setEditingItem({...editingItem, example2: e.target.value})} />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setEditingItem(null)}>Cancel</Button>
+                        <Button disabled={saving} onClick={() => handleSave('/api/daily-words', editingItem, 'Daily Word')}>
+                          {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* List */}
+                  <div className="space-y-2">
+                    {dailyWords.map((item) => (
+                      <div key={item.id} className="flex justify-between p-3 border rounded items-center bg-white">
                         <div>
-                          <p className="font-medium">{new Date(word.date).toLocaleDateString()}</p>
-                          <p className="text-sm text-gray-600">{word.word1} • {word.word2}</p>
-                          <Badge variant="secondary">{word.difficulty}</Badge>
+                          <div className="font-bold">{item.word1} & {item.word2}</div>
+                          <div className="text-xs text-gray-500">{new Date(item.date).toLocaleDateString()}</div>
                         </div>
                         <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => setEditingItem(word)}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setEditingItem({ ...item, type: 'daily-word' })}><Edit className="h-4 w-4" /></Button>
+                          <Button size="sm" variant="ghost" className="text-red-500" onClick={() => item.id && handleDelete('/api/daily-words', item.id)}><Trash2 className="h-4 w-4" /></Button>
                         </div>
                       </div>
                     ))}
@@ -355,384 +296,96 @@ export default function AdminPanel() {
             </div>
           </TabsContent>
 
-          {/* Flashcards Management */}
-          <TabsContent value="flashcards">
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Add New Flashcard</CardTitle>
-                    <Button onClick={() => setEditingItem({ type: 'flashcard' })}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Flashcard
-                    </Button>
-                  </div>
-                </CardHeader>
-              </Card>
-
-              {editingItem?.type === 'flashcard' && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Edit Flashcard</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div>
-                      <Label htmlFor="front">Front (Question)</Label>
-                      <Textarea
-                        id="front"
-                        value={editingItem.front || ''}
-                        onChange={(e) => setEditingItem({ ...editingItem, front: e.target.value })}
-                      />
-                    </div>
-                    
-                    <div>
-                      <Label htmlFor="back">Back (Answer)</Label>
-                      <Textarea
-                        id="back"
-                        value={editingItem.back || ''}
-                        onChange={(e) => setEditingItem({ ...editingItem, back: e.target.value })}
-                      />
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="category">Category</Label>
-                        <Input
-                          id="category"
-                          value={editingItem.category || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, category: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="difficulty">Difficulty</Label>
-                        <Select value={editingItem.difficulty || 'medium'} onValueChange={(value) => setEditingItem({ ...editingItem, difficulty: value })}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="easy">Easy</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="hard">Hard</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    
-                    <div className="flex gap-2">
-                      <Button onClick={() => saveFlashcard(editingItem)}>
-                        <Save className="h-4 w-4 mr-2" />
-                        Save
-                      </Button>
-                      <Button variant="outline" onClick={() => setEditingItem(null)}>
-                        <X className="h-4 w-4 mr-2" />
-                        Cancel
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Existing Flashcards</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {flashcards.map((card) => (
-                      <div key={card.id} className="flex items-center justify-between p-4 border rounded-lg">
-                        <div>
-                          <p className="font-medium">{card.front}</p>
-                          <p className="text-sm text-gray-600">{card.back}</p>
-                          <div className="flex gap-2 mt-1">
-                            <Badge variant="secondary">{card.category}</Badge>
-                            <Badge variant="outline">{card.difficulty}</Badge>
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => setEditingItem(card)}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* Quizzes Management */}
+          {/* --- QUIZZES --- */}
           <TabsContent value="quizzes">
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Add New Quiz</CardTitle>
-                    <Button onClick={() => setEditingItem({ type: 'quiz', options: [] })}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Quiz
-                    </Button>
-                  </div>
-                </CardHeader>
-              </Card>
-
-              {editingItem?.type === 'quiz' && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Edit Quiz</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div>
-                      <Label htmlFor="question">Question</Label>
-                      <Textarea
-                        id="question"
-                        value={editingItem.question || ''}
-                        onChange={(e) => setEditingItem({ ...editingItem, question: e.target.value })}
-                      />
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="type">Type</Label>
-                        <Select value={editingItem.type || 'multiple_choice'} onValueChange={(value) => setEditingItem({ ...editingItem, type: value })}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="multiple_choice">Multiple Choice</SelectItem>
-                            <SelectItem value="true_false">True/False</SelectItem>
-                            <SelectItem value="fill_blank">Fill in the Blank</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label htmlFor="difficulty">Difficulty</Label>
-                        <Select value={editingItem.difficulty || 'medium'} onValueChange={(value) => setEditingItem({ ...editingItem, difficulty: value })}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="easy">Easy</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="hard">Hard</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    
-                    {(editingItem.type === 'multiple_choice') && (
-                      <div>
-                        <Label>Options (one per line)</Label>
-                        <Textarea
-                          value={editingItem.options ? editingItem.options.join('\n') : ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, options: e.target.value.split('\n').filter(o => o.trim()) })}
-                          placeholder="Option 1&#10;Option 2&#10;Option 3&#10;Option 4"
-                        />
-                      </div>
-                    )}
-                    
-                    <div>
-                      <Label htmlFor="correctAnswer">Correct Answer</Label>
-                      <Input
-                        id="correctAnswer"
-                        value={editingItem.correctAnswer || ''}
-                        onChange={(e) => setEditingItem({ ...editingItem, correctAnswer: e.target.value })}
-                      />
-                    </div>
-                    
-                    <div>
-                      <Label htmlFor="explanation">Explanation</Label>
-                      <Textarea
-                        id="explanation"
-                        value={editingItem.explanation || ''}
-                        onChange={(e) => setEditingItem({ ...editingItem, explanation: e.target.value })}
-                      />
-                    </div>
-                    
-                    <div className="flex gap-2">
-                      <Button onClick={() => saveQuiz(editingItem)}>
-                        <Save className="h-4 w-4 mr-2" />
-                        Save
-                      </Button>
-                      <Button variant="outline" onClick={() => setEditingItem(null)}>
-                        <X className="h-4 w-4 mr-2" />
-                        Cancel
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Existing Quizzes</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {quizzes.map((quiz) => (
-                      <div key={quiz.id} className="flex items-center justify-between p-4 border rounded-lg">
-                        <div>
-                          <p className="font-medium">{quiz.question}</p>
-                          <p className="text-sm text-gray-600">Type: {quiz.type} • Points: {quiz.points}</p>
-                          <div className="flex gap-2 mt-1">
-                            <Badge variant="secondary">{quiz.category}</Badge>
-                            <Badge variant="outline">{quiz.difficulty}</Badge>
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => setEditingItem(quiz)}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* Events Management */}
-          <TabsContent value="events">
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Add New Event</CardTitle>
-                    <Button onClick={() => setEditingItem({ type: 'event', tags: [] })}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Event
-                    </Button>
-                  </div>
-                </CardHeader>
-              </Card>
-
-              {editingItem?.type === 'event' && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Edit Event</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div>
-                      <Label htmlFor="title">Title</Label>
-                      <Input
-                        id="title"
-                        value={editingItem.title || ''}
-                        onChange={(e) => setEditingItem({ ...editingItem, title: e.target.value })}
-                      />
-                    </div>
-                    
-                    <div>
-                      <Label htmlFor="description">Description</Label>
-                      <Textarea
-                        id="description"
-                        value={editingItem.description || ''}
-                        onChange={(e) => setEditingItem({ ...editingItem, description: e.target.value })}
-                      />
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="startDate">Start Date</Label>
-                        <Input
-                          id="startDate"
-                          type="datetime-local"
-                          value={editingItem.startDate || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, startDate: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="endDate">End Date</Label>
-                        <Input
-                          id="endDate"
-                          type="datetime-local"
-                          value={editingItem.endDate || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, endDate: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="type">Type</Label>
-                        <Select value={editingItem.type || 'webinar'} onValueChange={(value) => setEditingItem({ ...editingItem, type: value })}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="webinar">Webinar</SelectItem>
-                            <SelectItem value="workshop">Workshop</SelectItem>
-                            <SelectItem value="challenge">Challenge</SelectItem>
-                            <SelectItem value="competition">Competition</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label htmlFor="maxParticipants">Max Participants</Label>
-                        <Input
-                          id="maxParticipants"
-                          type="number"
-                          value={editingItem.maxParticipants || ''}
-                          onChange={(e) => setEditingItem({ ...editingItem, maxParticipants: parseInt(e.target.value) })}
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="flex gap-2">
-                      <Button onClick={() => saveEvent(editingItem)}>
-                        <Save className="h-4 w-4 mr-2" />
-                        Save
-                      </Button>
-                      <Button variant="outline" onClick={() => setEditingItem(null)}>
-                        <X className="h-4 w-4 mr-2" />
-                        Cancel
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Existing Events</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {events.map((event) => (
-                      <div key={event.id} className="flex items-center justify-between p-4 border rounded-lg">
-                        <div>
-                          <p className="font-medium">{event.title}</p>
-                          <p className="text-sm text-gray-600">{new Date(event.startDate).toLocaleDateString()}</p>
-                          <div className="flex gap-2 mt-1">
-                            <Badge variant="secondary">{event.type}</Badge>
-                            {event.isOnline && <Badge variant="outline">Online</Badge>}
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => setEditingItem(event)}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* Blogs Management - Simplified for space */}
-          <TabsContent value="blogs">
             <Card>
-              <CardHeader>
-                <CardTitle>Blog Management</CardTitle>
-                <CardDescription>Blog management interface would go here</CardDescription>
+              <CardHeader className="flex justify-between flex-row items-center">
+                <CardTitle>Quizzes</CardTitle>
+                <Button onClick={() => setEditingItem({ type: 'quiz', options: [], points: 10 })}><Plus className="mr-2 h-4 w-4"/> Add</Button>
               </CardHeader>
               <CardContent>
-                <p>Blog management with rich text editor would be implemented here.</p>
+                {editingItem?.type === 'quiz' && (
+                  <div className="bg-white p-6 border rounded-lg shadow-sm mb-6 space-y-4">
+                    <h3 className="font-bold">Quiz Editor</h3>
+                    <Label>Question</Label>
+                    <Textarea value={editingItem.question || ''} onChange={(e) => setEditingItem({...editingItem, question: e.target.value})} />
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                        <div><Label>Answer</Label><Input value={editingItem.correctAnswer || ''} onChange={(e) => setEditingItem({...editingItem, correctAnswer: e.target.value})} /></div>
+                        <div><Label>Points</Label><Input type="number" value={editingItem.points || 10} onChange={(e) => setEditingItem({...editingItem, points: parseInt(e.target.value)})} /></div>
+                    </div>
+                    <div>
+                        <Label>Options (One per line)</Label>
+                        <Textarea rows={4} value={Array.isArray(editingItem.options) ? editingItem.options.join('\n') : editingItem.options} onChange={(e) => setEditingItem({...editingItem, options: e.target.value.split('\n')})} />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setEditingItem(null)}>Cancel</Button>
+                        <Button disabled={saving} onClick={() => handleSave('/api/quizzes', editingItem, 'Quiz')}>
+                          {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save
+                        </Button>
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-2">
+                    {quizzes.map((q) => (
+                        <div key={q.id} className="flex justify-between p-3 border rounded items-center">
+                            <p className="truncate w-1/2">{q.question}</p>
+                            <div className="flex gap-2">
+                                <Button size="sm" variant="ghost" onClick={() => setEditingItem({ ...q, type: 'quiz' })}><Edit className="h-4 w-4"/></Button>
+                                <Button size="sm" variant="ghost" className="text-red-500" onClick={() => q.id && handleDelete('/api/quizzes', q.id)}><Trash2 className="h-4 w-4"/></Button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* --- EVENTS --- */}
+          <TabsContent value="events">
+            <Card>
+              <CardHeader className="flex justify-between flex-row items-center">
+                <CardTitle>Events</CardTitle>
+                <Button onClick={() => setEditingItem({ type: 'event', tags: [] })}><Plus className="mr-2 h-4 w-4"/> Add</Button>
+              </CardHeader>
+              <CardContent>
+                {editingItem?.type === 'event' && (
+                  <div className="bg-white p-6 border rounded-lg shadow-sm mb-6 space-y-4">
+                    <h3 className="font-bold">Event Editor</h3>
+                    <Label>Title</Label>
+                    <Input value={editingItem.title || ''} onChange={(e) => setEditingItem({...editingItem, title: e.target.value})} />
+                    <Label>Description</Label>
+                    <Textarea value={editingItem.description || ''} onChange={(e) => setEditingItem({...editingItem, description: e.target.value})} />
+                    <div className="grid grid-cols-2 gap-4">
+                        <div><Label>Start</Label><Input type="datetime-local" value={editingItem.startDate || ''} onChange={(e) => setEditingItem({...editingItem, startDate: e.target.value})} /></div>
+                        <div><Label>End</Label><Input type="datetime-local" value={editingItem.endDate || ''} onChange={(e) => setEditingItem({...editingItem, endDate: e.target.value})} /></div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setEditingItem(null)}>Cancel</Button>
+                        <Button disabled={saving} onClick={() => handleSave('/api/events', editingItem, 'Event')}>
+                          {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save
+                        </Button>
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-2">
+                    {events.map((e) => (
+                        <div key={e.id} className="flex justify-between p-3 border rounded items-center">
+                            <p>{e.title}</p>
+                            <div className="flex gap-2">
+                                <Button size="sm" variant="ghost" onClick={() => setEditingItem({ ...e, type: 'event' })}><Edit className="h-4 w-4"/></Button>
+                                <Button size="sm" variant="ghost" className="text-red-500" onClick={() => e.id && handleDelete('/api/events', e.id)}><Trash2 className="h-4 w-4"/></Button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="flashcards"><div className="p-4 text-center text-gray-500">Flashcard manager coming soon.</div></TabsContent>
+          <TabsContent value="blogs"><div className="p-4 text-center text-gray-500">Blog manager coming soon.</div></TabsContent>
+
         </Tabs>
       </div>
     </div>
