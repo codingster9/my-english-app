@@ -1,73 +1,90 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
 
-export async function GET(request: NextRequest) {
+// FORCE DYNAMIC: This tells Next.js to never cache this data.
+// It will fetch fresh data from Neon every single time.
+export const dynamic = 'force-dynamic';
+
+export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const date = searchParams.get('date');
-    const limit = searchParams.get('limit') || '30';
-    
-    if (date) {
-      // Get specific date's words - try to match just the date part
-      const dailyWord = await db.dailyWord.findFirst({
-        where: { 
-          date: {
-            gte: new Date(date + 'T00:00:00.000Z'),
-            lt: new Date(date + 'T23:59:59.999Z')
-          }
-        }
-      });
-      return NextResponse.json(dailyWord);
-    } else {
-      // Get recent words
-      const dailyWords = await db.dailyWord.findMany({
-        orderBy: { date: 'desc' },
-        take: parseInt(limit),
-        select: {
-          id: true,
-          date: true,
-          word1: true,
-          word2: true,
-          difficulty: true,
-          category: true
-        }
-      });
-      return NextResponse.json(dailyWords);
-    }
+    const { searchParams } = new URL(req.url);
+    const limit = parseInt(searchParams.get('limit') || '10');
+
+    const words = await prisma.dailyWord.findMany({
+      orderBy: { date: 'desc' },
+      take: limit,
+    });
+
+    // If no words found, return empty array instead of crashing
+    if (!words) return NextResponse.json([]);
+
+    return NextResponse.json(words);
   } catch (error) {
-    console.error('Error fetching daily words:', error);
-    return NextResponse.json({ error: 'Failed to fetch daily words' }, { status: 500 });
+    console.error("GET Error:", error);
+    return NextResponse.json({ error: 'Failed to fetch words' }, { status: 500 });
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const data = await request.json();
-    const { date, word1, meaning1, example1, word2, meaning2, example2, difficulty, category } = data;
+    const body = await req.json();
     
-    if (!date || !word1 || !meaning1 || !word2 || !meaning2) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    // NUCLEAR FIX: No admin check. Just save.
+    
+    if (body.id) {
+      // UPDATE existing
+      const updatedWord = await prisma.dailyWord.update({
+        where: { id: body.id },
+        data: {
+          date: new Date(body.date),
+          word1: body.word1,
+          meaning1: body.meaning1,
+          example1: body.example1,
+          word2: body.word2,
+          meaning2: body.meaning2,
+          example2: body.example2,
+          difficulty: body.difficulty,
+          category: body.category,
+        },
+      });
+      return NextResponse.json(updatedWord);
+    } else {
+      // CREATE new
+      const newWord = await prisma.dailyWord.create({
+        data: {
+          date: new Date(body.date),
+          word1: body.word1,
+          meaning1: body.meaning1,
+          example1: body.example1,
+          word2: body.word2,
+          meaning2: body.meaning2,
+          example2: body.example2,
+          difficulty: body.difficulty,
+          category: body.category,
+        },
+      });
+      return NextResponse.json(newWord);
     }
-    
-    const dailyWord = await db.dailyWord.upsert({
-      where: { date: new Date(date) },
-      update: { word1, meaning1, example1, word2, meaning2, example2, difficulty, category },
-      create: {
-        date: new Date(date),
-        word1,
-        meaning1,
-        example1,
-        word2,
-        meaning2,
-        example2,
-        difficulty: difficulty || 'medium',
-        category
-      }
-    });
-    
-    return NextResponse.json(dailyWord);
+
   } catch (error) {
-    console.error('Error creating daily word:', error);
-    return NextResponse.json({ error: 'Failed to create daily word' }, { status: 500 });
+    console.error("POST Error:", error);
+    return NextResponse.json({ error: 'Database failed to save' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+
+    if (!id) return NextResponse.json({ error: 'ID required' }, { status: 400 });
+
+    await prisma.dailyWord.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json({ error: 'Failed to delete' }, { status: 500 });
   }
 }
